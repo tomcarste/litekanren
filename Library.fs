@@ -19,6 +19,7 @@ module Stream =
         interface IEnumerable<'a> with
             member this.GetEnumerator() =
                 this.toSeq().GetEnumerator()
+    let just x = Cons (x,Nil)
     let rec mplus m1 m2 = 
         match m1 with
         | Nil -> m2
@@ -40,6 +41,8 @@ module Logic =
     type Term<'a> =
     | Var of int
     | Value of 'a
+    | Pair of Term<'a> * Term<'a>
+    | Empty
 
     type Subst<'a> = Subst of Map<int, Term<'a>> * int
 
@@ -53,29 +56,39 @@ module Logic =
         }
     let rec walk v m =
         match v with
-        | Value a -> Choice1Of2 a
+        | Value a -> Value a
+        | Empty -> Empty
+        | Pair (a,b) -> Pair (walk a m, walk b m)
         | Var i ->
             match Map.tryFind i m with
             | Some v' -> walk v' m
-            | None -> Choice2Of2 i
-
-    let unify (u: Term<'a>) (v:Term<'a>) :  Goal<'a> =
+            | None -> Var i
+    let conj m (n: Goal<'a>) : Goal<'a> =
+        monad {
+            let! (x: Stream<Subst<'a>>) = m
+            Stream.bind x (fun s -> State.eval n s)
+        }
+    let rec unify (u: Term<'a>) (v:Term<'a>) :  Goal<'a> =
         monad {
             let! Subst (m, c) = get
             match walk u m, walk v m with
-            | Choice1Of2 a, Choice1Of2 b -> 
+            | Value a, Value b -> 
                 if a = b then 
-                    Cons(Subst (m,c),Stream.Nil)
+                    just (Subst (m,c))
                 else
                     Stream.Nil
-            | Choice2Of2 a, Choice2Of2 b ->
+            | Var a, Var b ->
                 if a = b then 
-                    Cons(Subst (m,c),Stream.Nil)
+                    just (Subst (m,c))
                 else
                     Stream.Nil
-            | Choice1Of2 x, Choice2Of2 i
-            | Choice2Of2 i, Choice1Of2 x ->
-                Cons(Subst (Map.add i (Value x) m, c),Stream.Nil)
+            | a, Var i
+            | Var i, a ->
+                just (Subst (Map.add i a m, c))
+            | Empty, Empty -> just (Subst (m,c))
+            | Pair(a1,b1), Pair(a2,b2) -> 
+                return! conj (unify a1 a2) (unify b1 b2)
+            | _ -> Stream.Nil
         }
     let eq u v = unify u (Value v)
     let disj m n : Goal<'a> =
@@ -84,11 +97,7 @@ module Logic =
             let! (y: Stream<Subst<'a>>) = n
             mplus x y
         }
-    let conj m (n: Goal<'a>) : Goal<'a> =
-        monad {
-            let! (x: Stream<Subst<'a>>) = m
-            Stream.bind x (fun s -> State.eval n s)
-        }
+    
     let disjP exprs =
         exprs |> Seq.reduce disj
     let conjP exprs =
@@ -98,14 +107,14 @@ module Logic =
         |> Seq.map conjP
         |> disjP
 
-    let filter u v =
+    let neq u v =
         monad {
             let! matches = unify u v
             let! s = get
             if matches |> Seq.length > 0 then
                 return Stream.Nil
             else
-                return Cons(s,Stream.Nil)
+                return just s
         }
     let run l = State.eval l (Subst (Map.empty, 0))
 

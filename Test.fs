@@ -12,6 +12,11 @@ let parents p c: Goal<string> =
         [eq p "Alice"; eq c "Steve"]
     ]
 
+let feels (a:Term<string>) =
+    disjP [
+    unify a <| Pair (Value "Alice", Pair (Value "likes", Value "Bob")) 
+    unify a <| Pair (Value "Alice", Pair (Value "hates", Value "John")) 
+    ]
 let rec fives x: Goal<int> =
     disj (eq x 5) (delay <@fives x@>)
 let relo f a1 a2 =
@@ -42,7 +47,7 @@ type KanrenTests (output: ITestOutputHelper) =
             return! conjP [
                 (parents (Value "Allan") c) 
                 (parents p c)
-                Kanren.Logic.filter p (Value "Allan")
+                neq p (Value "Allan")
             ]
         })
         |> Seq.iter (output.WriteLine << sprintf "%A\n")
@@ -68,3 +73,15 @@ type KanrenTests (output: ITestOutputHelper) =
         Assert.Equal(5, answer |> Seq.length)
         answer
         |> Seq.iter (output.WriteLine << sprintf "%A\n")
+    [<Fact>]
+    let ``Relationships`` () =
+        let answer =
+            run (
+                monad {
+                    let! x = fresh ()
+                    let! y = fresh ()
+                    return! conj (unify x (Pair (Value "Alice", Pair (Value "likes", y)))) (feels x)
+                }
+            )
+        answer
+        |> (output.WriteLine << sprintf "%A\n")
